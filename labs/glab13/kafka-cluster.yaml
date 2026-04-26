@@ -5,6 +5,7 @@ metadata:
   namespace: kafka
 spec:
   clusterIP: None
+  # Crucial: allows nodes to find each other via DNS before they are "Ready"
   publishNotReadyAddresses: true
   ports:
     - name: broker
@@ -35,6 +36,8 @@ metadata:
 spec:
   serviceName: kafka-headless
   replicas: 3
+  # Sequential rollout is safer for initial quorum formation
+  podManagementPolicy: OrderedReady
   selector:
     matchLabels:
       app: kafka
@@ -52,26 +55,38 @@ spec:
           command: ["/bin/bash", "-c"]
           args:
             - |
-              NODE_ID=$(hostname | grep -o '[0-9]\+$')
-              FQDN=$(hostname).kafka-headless.kafka.svc.cluster.local
+              # Extract numeric ID from pod name (kafka-0 -> 0)
+              NODE_ID=${HOSTNAME##*-}
+              FQDN=${HOSTNAME}.kafka-headless.kafka.svc.cluster.local
               
-              # Wipe old data to ensure a clean quorum join
+              # Clear previous failed attempts
               rm -rf /tmp/kraft-combined-logs/*
 
-              # Create the config manually to override image defaults
+              # Build a clean configuration file
               cat <<EOF > /tmp/server.properties
               process.roles=broker,controller
               node.id=${NODE_ID}
               controller.quorum.voters=0@kafka-0.kafka-headless.kafka.svc.cluster.local:9093,1@kafka-1.kafka-headless.kafka.svc.cluster.local:9093,2@kafka-2.kafka-headless.kafka.svc.cluster.local:9093
               listeners=PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
-              advertised.listeners=PLAINTEXT://${FQDN}:9092,CONTROLLER://${FQDN}:9093
+              advertised.listeners=PLAINTEXT://${FQDN}:9092
               controller.listener.names=CONTROLLER
               listener.security.protocol.map=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
               inter.broker.listener.name=PLAINTEXT
               log.dirs=/tmp/kraft-combined-logs
               offsets.topic.replication.factor=3
               default.replication.factor=3
+              # Set a short timeout for initial startup stability
+              controller.quorum.election.timeout.ms=1000
+              controller.quorum.fetch.timeout.ms=2000
               EOF
 
+              # Format storage
               /opt/kafka/bin/kafka-storage.sh format --cluster-id "$CLUSTER_ID" --config /tmp/server.properties --ignore-formatted
+              
+              # Start Kafka
               exec /opt/kafka/bin/kafka-server-start.sh /tmp/server.properties
+          readinessProbe:
+            tcpSocket:
+              port: 9092
+            initialDelaySeconds: 20
+            periodSeconds: 5
