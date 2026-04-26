@@ -52,24 +52,25 @@ spec:
               value: "MkU3OEVBNTcwNTJENDM2Qk"
             - name: KAFKA_HEAP_OPTS
               value: "-Xmx512M -Xms512M"
+            # Explicitly blanking these out so the image doesn't auto-fill them
+            - name: KAFKA_ADVERTISED_LISTENERS
+              value: ""
+            - name: KAFKA_LISTENERS
+              value: ""
           command: ["/bin/bash", "-c"]
           args:
             - |
-              # Clear environment variables that conflict with our file
-              unset KAFKA_ADVERTISED_LISTENERS
-              unset KAFKA_LISTENERS
-              
               NODE_ID=${HOSTNAME##*-}
               FQDN=${HOSTNAME}.kafka-headless.kafka.svc.cluster.local
               
-              echo "Pre-start: Waiting 10s for DNS..."
+              echo "Waiting 10s for DNS..."
               sleep 10
 
-              # Ensure a clean slate in the temporary directory
+              # Wipe any previous Kraft data
               rm -rf /tmp/kraft-combined-logs/*
 
-              # Build the hermetic config
-              cat <<EOF > /tmp/kraft.properties
+              # OVERWRITE the image's default config file entirely
+              cat <<EOF > /opt/kafka/config/kraft/server.properties
               process.roles=broker,controller
               node.id=${NODE_ID}
               controller.quorum.voters=0@kafka-0.kafka-headless.kafka.svc.cluster.local:9093,1@kafka-1.kafka-headless.kafka.svc.cluster.local:9093,2@kafka-2.kafka-headless.kafka.svc.cluster.local:9093
@@ -84,11 +85,11 @@ spec:
               min.insync.replicas=1
               EOF
 
-              echo "Formatting storage for node ${NODE_ID}..."
-              /opt/kafka/bin/kafka-storage.sh format --cluster-id $CLUSTER_ID --config /tmp/kraft.properties --ignore-formatted
+              echo "Formatting storage with overwritten config..."
+              /opt/kafka/bin/kafka-storage.sh format --cluster-id $CLUSTER_ID --config /opt/kafka/config/kraft/server.properties --ignore-formatted
               
-              echo "Starting Kafka node ${NODE_ID}..."
-              exec /opt/kafka/bin/kafka-server-start.sh /tmp/kraft.properties
+              echo "Starting Kafka..."
+              exec /opt/kafka/bin/kafka-server-start.sh /opt/kafka/config/kraft/server.properties
           resources:
             requests:
               memory: "800Mi"
@@ -99,5 +100,5 @@ spec:
           readinessProbe:
             tcpSocket:
               port: 9092
-            initialDelaySeconds: 30
+            initialDelaySeconds: 40
             periodSeconds: 10
