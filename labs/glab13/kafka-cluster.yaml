@@ -55,19 +55,22 @@ spec:
           command: ["/bin/bash", "-c"]
           args:
             - |
+              # 1. Clear any 'ghost' variables that override our config file
+              unset KAFKA_ADVERTISED_LISTENERS
+              unset KAFKA_LISTENERS
+              
               NODE_ID=${HOSTNAME##*-}
-              # Using the simpler internal FQDN
               FQDN=${HOSTNAME}.kafka-headless.kafka.svc.cluster.local
               
-              echo "Pre-start: Waiting for DNS stabilization..."
+              echo "Network check: Waiting for $FQDN..."
               sleep 10
 
-              # Wipe any previous failed Kraft logs
+              # 2. Force clean logs
               rm -rf /tmp/kraft-combined-logs/*
 
-              # Create a TOTALLY isolated properties file
-              # Note: We removed the second listener from advertised.listeners
-              cat <<EOF > /tmp/custom-server.properties
+              # 3. Create the configuration
+              # Note: Use a unique name to prevent any internal image logic from finding it
+              cat <<EOF > /tmp/hermetic.properties
               process.roles=broker,controller
               node.id=${NODE_ID}
               controller.quorum.voters=0@kafka-0.kafka-headless.kafka.svc.cluster.local:9093,1@kafka-1.kafka-headless.kafka.svc.cluster.local:9093,2@kafka-2.kafka-headless.kafka.svc.cluster.local:9093
@@ -82,11 +85,14 @@ spec:
               min.insync.replicas=1
               EOF
 
-              echo "Formatting storage using custom config..."
-              /opt/kafka/bin/kafka-storage.sh format --cluster-id "$CLUSTER_ID" --config /tmp/custom-server.properties --ignore-formatted
+              # 4. Final verification: ensure advertised.listeners is NOT 0.0.0.0
+              grep "advertised.listeners" /tmp/hermetic.properties
+
+              echo "Formatting storage..."
+              /opt/kafka/bin/kafka-storage.sh format --cluster-id "$CLUSTER_ID" --config /tmp/hermetic.properties --ignore-formatted
               
-              echo "Starting Kafka with custom config..."
-              exec /opt/kafka/bin/kafka-server-start.sh /tmp/custom-server.properties
+              echo "Starting Kafka node $NODE_ID..."
+              exec /opt/kafka/bin/kafka-server-start.sh /tmp/hermetic.properties
           resources:
             requests:
               memory: "800Mi"
