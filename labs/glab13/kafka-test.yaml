@@ -1,0 +1,53 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-test
+  namespace: kafka
+spec:
+  ports:
+    - port: 9092
+  selector:
+    app: kafka-test
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka-test
+  namespace: kafka
+spec:
+  serviceName: kafka-test
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka-test
+  template:
+    metadata:
+      labels:
+        app: kafka-test
+    spec:
+      containers:
+        - name: kafka
+          image: apache/kafka:3.9.0
+          env:
+            - name: KAFKA_NODE_ID
+              value: "0"
+            - name: KAFKA_PROCESS_ROLES
+              value: "broker,controller"
+            - name: KAFKA_LISTENERS
+              value: "PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093"
+            - name: KAFKA_ADVERTISED_LISTENERS
+              value: "PLAINTEXT://localhost:9092"
+            - name: KAFKA_CONTROLLER_LISTENER_NAMES
+              value: "CONTROLLER"
+            - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
+              value: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+            - name: KAFKA_CONTROLLER_QUORUM_VOTERS
+              value: "0@localhost:9093"
+            - name: CLUSTER_ID
+              value: "MkU3OEVBNTcwNTJENDM2Qk"
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              rm -rf /tmp/kraft-combined-logs/*
+              /opt/kafka/bin/kafka-storage.sh format --cluster-id "$CLUSTER_ID" --config /opt/kafka/config/kraft/server.properties --ignore-formatted
+              exec /opt/kafka/bin/kafka-server-start.sh /opt/kafka/config/kraft/server.properties
