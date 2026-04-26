@@ -89,7 +89,7 @@ spec:
               memory: "800Mi"
               cpu: "250m"
             limits:
-              memory: "1.2Gi"
+              memory: "1200Mi"
               cpu: "1"
           readinessProbe:
             tcpSocket:
