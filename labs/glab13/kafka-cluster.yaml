@@ -52,44 +52,47 @@ spec:
               value: "MkU3OEVBNTcwNTJENDM2Qk"
             - name: KAFKA_HEAP_OPTS
               value: "-Xmx512M -Xms512M"
-            # Explicitly blanking these out so the image doesn't auto-fill them
-            - name: KAFKA_ADVERTISED_LISTENERS
-              value: ""
-            - name: KAFKA_LISTENERS
-              value: ""
           command: ["/bin/bash", "-c"]
           args:
             - |
-              NODE_ID=${HOSTNAME##*-}
-              FQDN=${HOSTNAME}.kafka-headless.kafka.svc.cluster.local
+              # 1. Identify node
+              MY_ID=${HOSTNAME##*-}
+              MY_FQDN=${HOSTNAME}.kafka-headless.kafka.svc.cluster.local
               
-              echo "Waiting 10s for DNS..."
-              sleep 10
+              echo "Starting Node $MY_ID (DNS: $MY_FQDN)"
+              sleep 5
 
-              # Wipe any previous Kraft data
-              rm -rf /tmp/kraft-combined-logs/*
-
-              # OVERWRITE the image's default config file entirely
-              cat <<EOF > /opt/kafka/config/kraft/server.properties
+              # 2. Kill every single KAFKA environment variable
+              # This prevents the image's internal Scala/Java code from 
+              # seeing ANY auto-injected settings.
+              for var in $(env | grep KAFKA_ | cut -d= -f1); do unset $var; done
+              
+              # 3. Create a totally custom, isolated config file
+              cat <<EOF > /tmp/server.properties
               process.roles=broker,controller
-              node.id=${NODE_ID}
+              node.id=${MY_ID}
               controller.quorum.voters=0@kafka-0.kafka-headless.kafka.svc.cluster.local:9093,1@kafka-1.kafka-headless.kafka.svc.cluster.local:9093,2@kafka-2.kafka-headless.kafka.svc.cluster.local:9093
               listeners=PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
-              advertised.listeners=PLAINTEXT://${FQDN}:9092
+              advertised.listeners=PLAINTEXT://${MY_FQDN}:9092
               controller.listener.names=CONTROLLER
               listener.security.protocol.map=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
               inter.broker.listener.name=PLAINTEXT
-              log.dirs=/tmp/kraft-combined-logs
+              log.dirs=/tmp/kraft-logs
               offsets.topic.replication.factor=3
               default.replication.factor=3
               min.insync.replicas=1
               EOF
 
-              echo "Formatting storage with overwritten config..."
-              /opt/kafka/bin/kafka-storage.sh format --cluster-id $CLUSTER_ID --config /opt/kafka/config/kraft/server.properties --ignore-formatted
-              
-              echo "Starting Kafka..."
-              exec /opt/kafka/bin/kafka-server-start.sh /opt/kafka/config/kraft/server.properties
+              # 4. Clean previous logs
+              rm -rf /tmp/kraft-logs/*
+
+              # 5. Run the storage tool DIRECTLY (bypassing wrapper scripts)
+              /opt/kafka/bin/kafka-storage.sh format \
+                --cluster-id "$CLUSTER_ID" \
+                --config /tmp/server.properties
+
+              # 6. Start Kafka DIRECTLY
+              exec /opt/kafka/bin/kafka-server-start.sh /tmp/server.properties
           resources:
             requests:
               memory: "800Mi"
@@ -97,8 +100,3 @@ spec:
             limits:
               memory: "1024Mi"
               cpu: "1"
-          readinessProbe:
-            tcpSocket:
-              port: 9092
-            initialDelaySeconds: 40
-            periodSeconds: 10
