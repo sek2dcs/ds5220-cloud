@@ -5,8 +5,7 @@ metadata:
   namespace: kafka
 spec:
   clusterIP: None
-  # Crucial: allows nodes to find each other via DNS before they are "Ready"
-  publishNotReadyAddresses: true
+  publishNotReadyAddresses: true # Allows nodes to find each other before they are "Ready"
   ports:
     - name: broker
       port: 9092
@@ -36,7 +35,6 @@ metadata:
 spec:
   serviceName: kafka-headless
   replicas: 3
-  # Sequential rollout is safer for initial quorum formation
   podManagementPolicy: OrderedReady
   selector:
     matchLabels:
@@ -55,14 +53,23 @@ spec:
           command: ["/bin/bash", "-c"]
           args:
             - |
-              # Extract numeric ID from pod name (kafka-0 -> 0)
+              # 1. Identify ourselves
               NODE_ID=${HOSTNAME##*-}
               FQDN=${HOSTNAME}.kafka-headless.kafka.svc.cluster.local
               
-              # Clear previous failed attempts
+              echo "Starting Kafka Node $NODE_ID with FQDN $FQDN"
+
+              # 2. Wait for DNS to be resolvable (The "Wait-Loop")
+              # This prevents the UnknownHostException by pausing until the network works.
+              until getent hosts $FQDN; do
+                echo "Waiting for DNS $FQDN to be resolvable..."
+                sleep 2
+              done
+
+              # 3. Clean environment
               rm -rf /tmp/kraft-combined-logs/*
 
-              # Build a clean configuration file
+              # 4. Generate properties
               cat <<EOF > /tmp/server.properties
               process.roles=broker,controller
               node.id=${NODE_ID}
@@ -75,18 +82,23 @@ spec:
               log.dirs=/tmp/kraft-combined-logs
               offsets.topic.replication.factor=3
               default.replication.factor=3
-              # Set a short timeout for initial startup stability
-              controller.quorum.election.timeout.ms=1000
-              controller.quorum.fetch.timeout.ms=2000
+              min.insync.replicas=1
               EOF
 
-              # Format storage
+              # 5. Format and Exec
               /opt/kafka/bin/kafka-storage.sh format --cluster-id "$CLUSTER_ID" --config /tmp/server.properties --ignore-formatted
               
-              # Start Kafka
+              echo "Executing kafka-server-start..."
               exec /opt/kafka/bin/kafka-server-start.sh /tmp/server.properties
+          resources:
+            requests:
+              memory: "768Mi" # Bumped slightly for stability on Mac
+              cpu: "250m"
+            limits:
+              memory: "1.5Gi"
+              cpu: "1"
           readinessProbe:
             tcpSocket:
               port: 9092
-            initialDelaySeconds: 20
-            periodSeconds: 5
+            initialDelaySeconds: 45 # Give Java plenty of time to warm up
+            periodSeconds: 10
