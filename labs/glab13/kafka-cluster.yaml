@@ -33,36 +33,48 @@ spec:
     spec:
       containers:
         - name: kafka
-          image: bitnami/kafka:3.9.0
+          # Using a specific, high-compatibility tag
+          image: bitnami/kafka:3.9.0-debian-12-r0
           env:
-            # KRaft Settings
-            - name: KAFKA_CFG_NODE_ID
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.name
+            # KRaft Role Settings
             - name: KAFKA_CFG_PROCESS_ROLES
               value: "controller,broker"
+            - name: KAFKA_CFG_CONTROLLER_LISTENER_NAMES
+              value: "CONTROLLER"
             - name: KAFKA_CFG_CONTROLLER_QUORUM_VOTERS
               value: "0@kafka-0.kafka-headless.kafka.svc.cluster.local:9093,1@kafka-1.kafka-headless.kafka.svc.cluster.local:9093,2@kafka-2.kafka-headless.kafka.svc.cluster.local:9093"
             - name: KAFKA_KRAFT_CLUSTER_ID
               value: "MkU3OEVBNTcwNTJENDM2Qk"
-            # Listener Settings
+            
+            # Identify the node by its pod name
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            
+            # Bitnami-specific Node ID logic (extracts the number from the pod name)
+            - name: KAFKA_CFG_NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['apps.kubernetes.io/pod-index']
+            
+            # Listener Settings - The key to fixing 0.0.0.0
             - name: KAFKA_CFG_LISTENERS
               value: "PLAINTEXT://:9092,CONTROLLER://:9093"
             - name: KAFKA_CFG_ADVERTISED_LISTENERS
-              value: "PLAINTEXT://$(KAFKA_CFG_NODE_ID).kafka-headless.kafka.svc.cluster.local:9092"
+              value: "PLAINTEXT://$(POD_NAME).kafka-headless.kafka.svc.cluster.local:9092"
+            
+            # Protocol Mapping
             - name: KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP
               value: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
-            - name: KAFKA_CFG_CONTROLLER_LISTENER_NAMES
-              value: "CONTROLLER"
             - name: KAFKA_CFG_INTER_BROKER_LISTENER_NAME
               value: "PLAINTEXT"
-            # Misc
+            
+            # Security & Performance
             - name: ALLOW_PLAINTEXT_LISTENER
               value: "yes"
             - name: KAFKA_HEAP_OPTS
               value: "-Xmx512M -Xms512M"
-          # Bitnami uses a pre-defined entrypoint, so we don't need a custom 'command'
           resources:
             limits:
               memory: "1024Mi"
