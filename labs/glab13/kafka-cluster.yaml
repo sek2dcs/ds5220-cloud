@@ -5,7 +5,7 @@ metadata:
   namespace: kafka
 spec:
   clusterIP: None
-  publishNotReadyAddresses: true 
+  publishNotReadyAddresses: true
   ports:
     - name: broker
       port: 9092
@@ -33,52 +33,38 @@ spec:
     spec:
       containers:
         - name: kafka
-          image: apache/kafka:3.9.0
+          image: bitnami/kafka:3.9.0
           env:
-            - name: CLUSTER_ID
-              value: "MkU3OEVBNTcwNTJENDM2Qk"
-            - name: POD_NAME
+            # KRaft Settings
+            - name: KAFKA_CFG_NODE_ID
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
-          command: ["/bin/bash", "-c"]
-          args:
-            - |
-              # Standardize the Node ID from the Pod name (kafka-0 -> 0)
-              NODE_ID=${POD_NAME##*-}
-              FQDN="${POD_NAME}.kafka-headless.kafka.svc.cluster.local"
-              
-              # Kill environment variables that trigger the 0.0.0.0 bug
-              unset KAFKA_ADVERTISED_LISTENERS
-              unset KAFKA_LISTENERS
-
-              echo "Configuring Node ${NODE_ID} at ${FQDN}..."
-              
-              # Create a clean configuration file
-              cat <<EOF > /tmp/server.properties
-              process.roles=broker,controller
-              node.id=${NODE_ID}
-              controller.quorum.voters=0@kafka-0.kafka-headless.kafka.svc.cluster.local:9093,1@kafka-1.kafka-headless.kafka.svc.cluster.local:9093,2@kafka-2.kafka-headless.kafka.svc.cluster.local:9093
-              listeners=PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
-              advertised.listeners=PLAINTEXT://${FQDN}:9092
-              controller.listener.names=CONTROLLER
-              listener.security.protocol.map=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
-              inter.broker.listener.name=PLAINTEXT
-              log.dirs=/tmp/kraft-logs
-              offsets.topic.replication.factor=3
-              default.replication.factor=3
-              min.insync.replicas=1
-              EOF
-
-              rm -rf /tmp/kraft-logs/*
-
-              # Format and start
-              /opt/kafka/bin/kafka-storage.sh format --cluster-id "$CLUSTER_ID" --config /tmp/server.properties --ignore-formatted
-              exec /opt/kafka/bin/kafka-server-start.sh /tmp/server.properties
+            - name: KAFKA_CFG_PROCESS_ROLES
+              value: "controller,broker"
+            - name: KAFKA_CFG_CONTROLLER_QUORUM_VOTERS
+              value: "0@kafka-0.kafka-headless.kafka.svc.cluster.local:9093,1@kafka-1.kafka-headless.kafka.svc.cluster.local:9093,2@kafka-2.kafka-headless.kafka.svc.cluster.local:9093"
+            - name: KAFKA_KRAFT_CLUSTER_ID
+              value: "MkU3OEVBNTcwNTJENDM2Qk"
+            # Listener Settings
+            - name: KAFKA_CFG_LISTENERS
+              value: "PLAINTEXT://:9092,CONTROLLER://:9093"
+            - name: KAFKA_CFG_ADVERTISED_LISTENERS
+              value: "PLAINTEXT://$(KAFKA_CFG_NODE_ID).kafka-headless.kafka.svc.cluster.local:9092"
+            - name: KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP
+              value: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+            - name: KAFKA_CFG_CONTROLLER_LISTENER_NAMES
+              value: "CONTROLLER"
+            - name: KAFKA_CFG_INTER_BROKER_LISTENER_NAME
+              value: "PLAINTEXT"
+            # Misc
+            - name: ALLOW_PLAINTEXT_LISTENER
+              value: "yes"
+            - name: KAFKA_HEAP_OPTS
+              value: "-Xmx512M -Xms512M"
+          # Bitnami uses a pre-defined entrypoint, so we don't need a custom 'command'
           resources:
-            requests:
-              memory: "800Mi"
-              cpu: "250m"
             limits:
               memory: "1024Mi"
               cpu: "1"
+ 
