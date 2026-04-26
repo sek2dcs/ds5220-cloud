@@ -5,7 +5,7 @@ metadata:
   namespace: kafka
 spec:
   clusterIP: None
-  publishNotReadyAddresses: true # Allows nodes to find each other before they are "Ready"
+  publishNotReadyAddresses: true 
   ports:
     - name: broker
       port: 9092
@@ -50,27 +50,24 @@ spec:
           env:
             - name: CLUSTER_ID
               value: "MkU3OEVBNTcwNTJENDM2Qk"
+            - name: KAFKA_HEAP_OPTS
+              value: "-Xmx512M -Xms512M"
           command: ["/bin/bash", "-c"]
           args:
             - |
-              # 1. Identify ourselves
               NODE_ID=${HOSTNAME##*-}
+              # Using the simpler internal FQDN
               FQDN=${HOSTNAME}.kafka-headless.kafka.svc.cluster.local
               
-              echo "Starting Kafka Node $NODE_ID with FQDN $FQDN"
+              echo "Pre-start: Waiting for DNS stabilization..."
+              sleep 10
 
-              # 2. Wait for DNS to be resolvable (The "Wait-Loop")
-              # This prevents the UnknownHostException by pausing until the network works.
-              until getent hosts $FQDN; do
-                echo "Waiting for DNS $FQDN to be resolvable..."
-                sleep 2
-              done
-
-              # 3. Clean environment
+              # Wipe any previous failed Kraft logs
               rm -rf /tmp/kraft-combined-logs/*
 
-              # 4. Generate properties
-              cat <<EOF > /tmp/server.properties
+              # Create a TOTALLY isolated properties file
+              # Note: We removed the second listener from advertised.listeners
+              cat <<EOF > /tmp/custom-server.properties
               process.roles=broker,controller
               node.id=${NODE_ID}
               controller.quorum.voters=0@kafka-0.kafka-headless.kafka.svc.cluster.local:9093,1@kafka-1.kafka-headless.kafka.svc.cluster.local:9093,2@kafka-2.kafka-headless.kafka.svc.cluster.local:9093
@@ -85,14 +82,14 @@ spec:
               min.insync.replicas=1
               EOF
 
-              # 5. Format and Exec
-              /opt/kafka/bin/kafka-storage.sh format --cluster-id "$CLUSTER_ID" --config /tmp/server.properties --ignore-formatted
+              echo "Formatting storage using custom config..."
+              /opt/kafka/bin/kafka-storage.sh format --cluster-id "$CLUSTER_ID" --config /tmp/custom-server.properties --ignore-formatted
               
-              echo "Executing kafka-server-start..."
-              exec /opt/kafka/bin/kafka-server-start.sh /tmp/server.properties
+              echo "Starting Kafka with custom config..."
+              exec /opt/kafka/bin/kafka-server-start.sh /tmp/custom-server.properties
           resources:
             requests:
-              memory: "768Mi" # Bumped slightly for stability on Mac
+              memory: "800Mi"
               cpu: "250m"
             limits:
               memory: "1.5Gi"
@@ -100,5 +97,5 @@ spec:
           readinessProbe:
             tcpSocket:
               port: 9092
-            initialDelaySeconds: 45 # Give Java plenty of time to warm up
+            initialDelaySeconds: 30
             periodSeconds: 10
